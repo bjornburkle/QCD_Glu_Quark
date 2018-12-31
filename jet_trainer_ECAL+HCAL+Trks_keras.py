@@ -10,6 +10,7 @@ import h5py
 #import torch.optim as optim
 #from torch.utils.data import *
 import keras
+from keras.utils.io_utils import HDF5Matrix
 import tensorflow as tf
 from sklearn.metrics import roc_curve, auc
 
@@ -29,7 +30,7 @@ epochs = args.epochs
 
 expt_name = 'ResNet_blocks%d_RH1o100_ECAL+HCAL+Trk_lr%s_gamma0.5every10ep_epochs%d'%(resblocks, str(lr_init), epochs)
 
-# This should read in the hdf5 files in the same fashion that the parquet files were read. However, need to change some more stuff down 
+'''
 class hdf5Dataset(Dataset):
     def __init__(self, filename):
         self.hdf5 = h5py.File(filename)
@@ -47,6 +48,15 @@ class hdf5Dataset(Dataset):
         return dict(data)
     def __len__(self):
         return self.hdf5.shape[1]
+'''
+
+def hdf5Dataset(filename, start, end):
+    x = HDF5Matrix(filename, 'X_jets', start=start, end=end)[0]
+    x = x[x < 1e-3] = 0. # Zero-Suppresion
+    x = 25.*x[-1,...] # For HCAL: to match pixel intensity distn of other layers
+    x = x/100. # To standardize
+    y = HDF5Matrix(filename, 'y', start=start, end=end)
+    return x, y
 
 # After N batches, will output the loss and accuracy of the last batch tested
 class NBatchLogger(keras.callbacks.Callback):
@@ -83,8 +93,8 @@ class SaveEpoch(keras.callbacks.Callback):
             h.create_dataset('trp', data=tpr)
             h.create_dataset('y_truth', data=y)
             h.create_dataset('y_pred', data=y_pred)
-            h.create_dataset('m0', data=x['m0'])
-            h.create_dataset('pt', data=x['pt'])
+            #h.create_dataset('m0', data=x['m0'])
+            #h.create_dataset('pt', data=x['pt'])
             h.close()
 
 # TODO change the decay and decays variables to read the boosted jet files
@@ -97,19 +107,14 @@ for d in ['MODELS', 'METRICS']:
     if not os.path.isdir('%s/%s'%(d, expt_name)):
         os.makedirs('%s/%s'%(d, expt_name))
 # TODO
-# Have dset_train read the hdf5 files (need to change ParquestDataset to new hdf5Dataset class).
-# Change pytorch data loaders to keras data loaders
 # Make it so the pt and m0 variables are not passed as an input to the NN, but still make it so I have access to those variables when saving network metrics
-train_cut = 2*384*1000 # CMS OpenData study
-dset_train = ConcatDataset([ParquetDataset(d) for d in decays])
-idxs = np.random.permutation(len(dset_train))
-train_sampler = sampler.SubsetRandomSampler(idxs[:train_cut])
-train_loader = DataLoader(dataset=dset_train, batch_size=32, num_workers=10, sampler=train_sampler, pin_memory=True)
 
-dset_val = ConcatDataset([ParquetDataset(d) for d in decays])
-val_sampler = sampler.SubsetRandomSampler(idxs[train_cut:])
-val_loader = DataLoader(dataset=dset_val, batch_size=120, num_workers=10, sampler=val_sampler)
+train_sz = 700000
+valid_sz = 50000
+test_sz = 50000
 
+train_x, train_y = hdf5Dataset(datafile, 0, train_sz)
+val_x, val_y = hdf5Dataset(datafile, trin_sz, train_sz+valid_sz)
 
 #TODO make sure I am properly running overgpu
 #possible method 1, tf backend
