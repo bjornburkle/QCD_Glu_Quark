@@ -4,6 +4,7 @@ import os, glob
 import time
 import h5py
 import keras
+import math
 from keras.utils.io_utils import HDF5Matrix
 import tensorflow as tf
 from sklearn.metrics import roc_curve, auc
@@ -14,7 +15,7 @@ parser.add_argument('-e', '--epochs', default=30, type=int, help='Number of trai
 parser.add_argument('-l', '--lr_init', default=5.e-4, type=float, help='Initial learning rate.')
 parser.add_argument('-b', '--resblocks', default=3, type=int, help='Number of residual blocks.')
 parser.add_argument('-c', '--cuda', default=0, type=int, help='Which gpuid to use.')
-parser.add_argument('-a', '--load_argument', default=0, type=int, help='Which epoch to start training from')
+parser.add_argument('-a', '--load_epoch', default=0, type=int, help='Which epoch to start training from')
 args = parser.parse_args()
 
 lr_init = args.lr_init
@@ -28,10 +29,11 @@ expt_name = 'keras_small_test'
 datafile = 'IMG/test_BoostedJets.hdf5'
 
 def hdf5Dataset(filename, start, end):
-    x = HDF5Matrix(filename, 'X_jets', start=start, end=end)[0]
-    x[x < 1.e-3] = 0. # Zero-Suppresion
-    x[-1,...] = 25.*x[-1,...] # For HCAL: to match pixel intensity distn of other layers
-    x = x/100. # To standardize
+    x = HDF5Matrix(filename, 'X_jets', start=start, end=end)
+    # These steps are being moved to hdf5 conversion step
+    #x[x < 1.e-3] = 0. # Zero-Suppresion
+    #x[-1,...] = 25.*x[-1,...] # For HCAL: to match pixel intensity distn of other layers
+    #x = x/100. # To standardize
     y = HDF5Matrix(filename, 'y', start=start, end=end)
     return x, y
 
@@ -56,7 +58,7 @@ class SaveEpoch(keras.callbacks.Callback):
 
     def on_epoch_end(self, epoch, logs={}):
         x, y = self.test_data
-        y_pred = model.predict(x, verbose=1)
+        y_pred = self.model.predict(x, verbose=1)
         fpr, tpr, _ = roc_curve(y, y_pred)
         auc = roc_curve(fpr, tpr)
         print('\nAUC for epoch %d is: %.4f, best is %.4f' % (epoch, auc, self.auc_best))
@@ -73,6 +75,12 @@ class SaveEpoch(keras.callbacks.Callback):
             #h.create_dataset('m0', data=x['m0'])
             #h.create_dataset('pt', data=x['pt'])
             h.close()
+
+def LR_Decay(epoch):
+    drop = 0.5
+    epochs_drop = 10
+    lr = lr_init * math.pow(drop, math.floor((epoch+1)/epochs_drop))
+    return lr
 
 # TODO change the decay and decays variables to read the boosted jet files
 decay = 'BoostedJets'
@@ -96,6 +104,7 @@ val_x, val_y = hdf5Dataset(datafile, train_sz, train_sz+valid_sz)
 #possible method 1, tf backend
 from keras.backend.tensorflow_backend import set_session
 config = tf.ConfigProto()
+config.gpu_options.per_process_gpu_memory_fraction = 0.2
 set_session(tf.Session(config=config))
 #possible method 2, theano backend
 #import theano
@@ -103,25 +112,30 @@ set_session(tf.Session(config=config))
 #theano.config.floatX='float32'
 
 import keras_resnet_single as networks
-#resnet = networks.ResNet(3, resblocks, [16, 32])
-resnet = keras.Model(inputs=keras.layers.Input(shape=(125,125,3)), outputs=networks.ResNet(3, resblocks, [16,32]))
+print('Training set size is:', train_x.shape[0])
+print('Image size is:', train_x.shape[1:])
+resnet = networks.ResNet.build(3, resblocks, [16,32], train_x.shape[1:])
 if args.load_epoch != 0:
     model_name = glob.glob('MODELS/%s/model_epoch%d_auc*.hdf5'%(expt_name, args.load_epoch))[0]
     assert model_name != ''
     print('Loading weights from file:', model_name)
     #resnet = keras.models.load_model(model_name)
     resnet = keras.models.load_weights(model_name)
-resnet.compile(loss='binary_cross_entropy', optimizer=Adam(lr=lr_init), metrics=['accuracy'])
+opt = keras.optimizers.Adam(lr=lr_init, epsilon=1.e-8) # changed eps to match pytorch value
+resnet.compile(loss='binary_crossentropy', optimizer=opt, metrics=['accuracy'])
 resnet.summary()
 
 #checkpoint = resnet.callbacks.ModelCheckpoint('MODELS/{expt_name:s}/model_epoch{epoch:02d}_auc{val_loss:.4f}.hdf5', monitor='val_loss', verbose=1, save_best_only=True, save_weights_only=True, mode='auto', period=1)
+# Model Callbacks
 print_step = 1000
-checkpoint = SaveEpoch((val_x, val_y), expt_name, agrs.load_epoch)
+checkpoint = SaveEpoch((val_x, val_y), expt_name)
 batch_logger = NBatchLogger(display=print_step)
 csv_logger = keras.callbacks.CSVLogger('%s.log'%(expt_name), separator=',', append=False)
-callbacks_list=[checkpoint, batch_logger, csv_logger]
+lr_scheduler = keras.callbacks.LearningRateScheduler(LR_Decay)
+#callbacks_list=[checkpoint, batch_logger, csv_logger, lr_scheduler]
+callbacks_list=[checkpoint, csv_logger, lr_scheduler]
 
-history = resnet.Fit(x=train_x, y=train_y, batch_size=32, epochs=epochs, verbose=1, callbacks=callbacks_list, validation_data=(val_x, val_y), shuffle=True, initial_epoch = args.load_epoch)
+history = resnet.fit(x=train_x, y=train_y, batch_size=32, epochs=epochs, verbose=1, callbacks=callbacks_list, validation_data=(val_x, val_y), shuffle='batch', initial_epoch = args.load_epoch)
 
 print('Network has finished training')
 
