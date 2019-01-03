@@ -37,6 +37,43 @@ def hdf5Dataset(filename, start, end):
     y = HDF5Matrix(filename, 'y', start=start, end=end)
     return x, y
 
+# For this to work right, may need to split training, validation, and testing data sets into 3 separate input files
+# Can also put the different datasets as different groups in the same hdf5 file
+class DataGenerator(keras.utils.Sequence):
+    def __init__(self, filename, batch_size=32, data_split=100):
+        self.hf = h5py.File(filename, 'r')
+        self.total_len = len(self.hf['y'])
+        self.batch_size = batch_size
+        self.idx = 0
+        self.len_segment = int(self.total_len / data_split)
+        self.cur_seg_idx = 0
+        self.x_cur = self.hf['X_jets'][:self.len_segment]
+        self.y_cur = self.hf['y'][:self.len_segment]
+
+    def __len__(self):
+        return self.data_split
+
+    def next_seg(self):
+        self.cur_seg_idx += self.len_segment
+        self.x_cur = self.hf['X_jets'][self.cur_seg_idx:self.cur_seg_idx+self.len_segment]
+        self.y_cur = self.hf['y'][self.cur_seg_idx:self.cur_seg_idx+self.len_segment]
+
+    def generate(self):
+        while 1:
+            idx = self.idx
+            if idx >= self.len_segment:
+                self.next_seg()
+                idx = 0
+
+            if idx + self.batch_size >= self.len_segment:
+                batch_x = self.x_cur[idx:]
+                batch_y = self.y_cur[idx:]
+            else:
+                batch_x = self.x_cur[idx:(idx + self.batch_size)]
+                batch_y = self.y_cur[idx:(idx + self.batch_size)]
+            self.idx = idx + self.batch_size
+            yield batch_x, batch_y
+
 # After N batches, will output the loss and accuracy of the last batch tested
 class NBatchLogger(keras.callbacks.Callback):
     def __init__(self, display=100):
@@ -58,12 +95,13 @@ class SaveEpoch(keras.callbacks.Callback):
 
     def on_epoch_end(self, epoch, logs={}):
         x, y = self.test_data
-        y_pred = self.model.predict(x, verbose=1)
-        fpr, tpr, _ = roc_curve(y, y_pred)
-        auc = roc_curve(fpr, tpr)
-        print('\nAUC for epoch %d is: %.4f, best is %.4f' % (epoch, auc, self.auc_best))
-        if auc > self.auc_best:
-            self.auc_best = auc
+        y_pred = self.model.predict(x, verbose=1).ravel()
+        #fpr, tpr, _ = roc_curve(keras.backend.eval(y), y_pred)
+        #roc_auc = auc(fpr, tpr)
+        roc_auc = 0
+        print('\nAUC for epoch %d is: %.4f, best is %.4f' % (epoch, roc_auc, self.auc_best))
+        if roc_auc > self.auc_best:
+            self.auc_best = roc_auc
             score_str = 'epoch%d_auc%.4f'%(epoch, self.auc_best)
             model.save_weights('MODELS/%s/%s.hdf5'%(self.folder, score_str))
 
@@ -93,11 +131,12 @@ for d in ['MODELS', 'METRICS']:
 # Make it so the pt and m0 variables are not passed as an input to the NN, but still make it so I have access to those variables when saving network metrics
 
 # Test input file is size 32000
-train_sz = 20000
-valid_sz = 5600
+train_sz = 10400
+valid_sz = 2880
 test_sz = 5600
 
-train_x, train_y = hdf5Dataset(datafile, 0, train_sz)
+#train_x, train_y = hdf5Dataset(datafile, 0, train_sz)
+training_generator = DataGenerator(datafile, batch_size=32, data_split=100).generate()
 val_x, val_y = hdf5Dataset(datafile, train_sz, train_sz+valid_sz)
 
 #TODO make sure I am properly running overgpu
@@ -112,9 +151,9 @@ set_session(tf.Session(config=config))
 #theano.config.floatX='float32'
 
 import keras_resnet_single as networks
-print('Training set size is:', train_x.shape[0])
-print('Image size is:', train_x.shape[1:])
-resnet = networks.ResNet.build(3, resblocks, [16,32], train_x.shape[1:])
+#print('Training set size is:', train_x.shape[0])
+#print('Image size is:', train_x.shape[1:])
+resnet = networks.ResNet.build(3, resblocks, [16,32], (125,125,3))
 if args.load_epoch != 0:
     model_name = glob.glob('MODELS/%s/model_epoch%d_auc*.hdf5'%(expt_name, args.load_epoch))[0]
     assert model_name != ''
@@ -125,7 +164,6 @@ opt = keras.optimizers.Adam(lr=lr_init, epsilon=1.e-8) # changed eps to match py
 resnet.compile(loss='binary_crossentropy', optimizer=opt, metrics=['accuracy'])
 resnet.summary()
 
-#checkpoint = resnet.callbacks.ModelCheckpoint('MODELS/{expt_name:s}/model_epoch{epoch:02d}_auc{val_loss:.4f}.hdf5', monitor='val_loss', verbose=1, save_best_only=True, save_weights_only=True, mode='auto', period=1)
 # Model Callbacks
 print_step = 1000
 checkpoint = SaveEpoch((val_x, val_y), expt_name)
@@ -135,7 +173,8 @@ lr_scheduler = keras.callbacks.LearningRateScheduler(LR_Decay)
 #callbacks_list=[checkpoint, batch_logger, csv_logger, lr_scheduler]
 callbacks_list=[checkpoint, csv_logger, lr_scheduler]
 
-history = resnet.fit(x=train_x, y=train_y, batch_size=32, epochs=epochs, verbose=1, callbacks=callbacks_list, validation_data=(val_x, val_y), shuffle='batch', initial_epoch = args.load_epoch)
+history = resnet.fit_generator(training_generator, steps_per_epoch=100, epochs=epochs, verbose=1, validation_data=(val_x, val_y), callbacks=callbacks_list, workers=10, initial_epoch=args.load_epoch, shuffle=True)
+#history = resnet.fit(x=train_x, y=train_y, batch_size=32, epochs=epochs, verbose=1, callbacks=callbacks_list, validation_data=(val_x, val_y), shuffle='batch', initial_epoch = args.load_epoch)
 
 print('Network has finished training')
 
