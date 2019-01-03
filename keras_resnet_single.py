@@ -1,54 +1,56 @@
 import keras
-from keras.models import Sequentual
+from keras.models import Sequential
 from keras import layers
 from keras.layers.merge import add
 
+# TODO
+# For kernel size and stride, went from a single value 'n' to a tuple '(n,n)'. Need to make sure that this is the correct way to go from pytorch to keras
 def ResBlock(x, in_channels, out_channels):
     residual = x
 
     downsample = out_channels//in_channels
 
     #TODO check the way that these layers are working, make sure it is done properly
-    #TODO make sure that I want the batch normalization layers
-    conv = layers.Conv2D(out_channels, activation='relu', kernel_size=(3,3), stride=downsample, padding=1)(x)
-    conv = layers.BatchNormalization()(conv)
-    conv = layers.Conv2D(out_channels, kernel_size=3, kernel_size=(3,3), padding=1)(conv)
-    conv = layers.BatchNormalization()(conv)
-    #shortcut = layers.Conv2D(out_channels, kernel_size=1, stride=downsample)(x)
+    #TODO see if I want the batch normalization layers
+    conv = layers.Conv2D(out_channels, input_shape=keras.backend.shape(x), activation='relu', kernel_size=(3,3), strides=(downsample,downsample), padding='SAME')(x)
+    #conv = layers.BatchNormalization()(conv)
+    conv = layers.Conv2D(out_channels, kernel_size=(3,3), padding='SAME')(conv)
+    #conv = layers.BatchNormalization()(conv)
+    #shortcut = layers.Conv2D(out_channels, kernel_size=1, strides=downsample)(x)
 
     if downsample > 1:
         #residual = shortcut
-        residual = layers.Conv2D(out_channels, kernel_size=1, stride=downsample)(x)
+        residual = layers.Conv2D(out_channels, kernel_size=1, strides=downsample)(x)
 
-    block = layers.merge.add([conv, residual])
+    block = layers.Add()([conv, residual])
+    #block = conv + residual
     block = layers.Activation('relu')(block)
 
     return block
 
 def ResNet(in_channels, nblocks, fmaps):
 
-    model = Sequential() 
+    inputs = layers.Input(shape=(125,125,in_channels))
 
-    #conv0
-    model.add(layers.Conv2D(fmaps[0], kernal_size=7, stride=2, padding=1))
-    model.add(layers.Activation('relu'))
-    model.add(layers.MaxPooling2D(pool_size=2)) #TODO make sure that pool_size is the same as kernal_size
+    #conv0 - changed padding from 1 to 'SAME'
+    x = layers.Conv2D(fmaps[0], input_shape=keras.backend.shape(inputs), kernel_size=(7,7), strides=(2,2), padding='SAME')(inputs)
+    x = layers.Activation('relu')(x)
+    x = layers.MaxPooling2D(pool_size=2)(x) #TODO make sure that pool_size is the same as kernal_size
 
     #ResBlocks
-    model.add(block_layers(nblocks, [fmaps[0],fmaps[0]])
-    model.add(block_layers(1, [fmaps[0],fmaps[1]])
-    model.add(block_layers(nblocks, [fmaps[1],fmaps[1]])
+    def block_layers(_x, _nblocks, _fmaps):
+        for _ in range(_nblocks):
+            _x = ResBlock(_x, _fmaps[0], _fmaps[1])
+        return _x
+
+    x = block_layers(x, nblocks, [fmaps[0],fmaps[0]])
+    x = block_layers(x, 1, [fmaps[0],fmaps[1]])
+    x = block_layers(x, nblocks, [fmaps[1],fmaps[1]])
 
     #TODO get pool size
-    model.add(layers.MaxPooling2D())
+    x = layers.MaxPooling2D()(x)
     #TODO change shape of output (done using view), but may not be needed in keras
-    model.add(layers.Dense(1))
+    predictions = layers.Dense(1)(x)
 
-    def block_layers(_nblocks, _fmaps):
-        _layers = Sequentual()
-        for _ in range(_nblocks)
-            _layers.add(ResBlock(_fmaps[0], _fmaps[1]))
-        return _layers
-
-    return model
+    return predictions
 

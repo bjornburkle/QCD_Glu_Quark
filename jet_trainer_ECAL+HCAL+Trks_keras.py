@@ -3,12 +3,6 @@ np.random.seed(0)
 import os, glob
 import time
 import h5py
-#import pyarrow as pa
-#import pyarrow.parquet as pq
-#import torch
-#import torch.nn.functional as F
-#import torch.optim as optim
-#from torch.utils.data import *
 import keras
 from keras.utils.io_utils import HDF5Matrix
 import tensorflow as tf
@@ -28,32 +22,15 @@ resblocks = args.resblocks
 epochs = args.epochs
 #os.environ["CUDA_VISIBLE_DEVICES"]=str(args.cuda)
 
-expt_name = 'ResNet_blocks%d_RH1o100_ECAL+HCAL+Trk_lr%s_gamma0.5every10ep_epochs%d'%(resblocks, str(lr_init), epochs)
+#expt_name = 'ResNet_blocks%d_RH1o100_ECAL+HCAL+Trk_lr%s_gamma0.5every10ep_epochs%d'%(resblocks, str(lr_init), epochs)
+expt_name = 'keras_small_test'
 
-'''
-class hdf5Dataset(Dataset):
-    def __init__(self, filename):
-        self.hdf5 = h5py.File(filename)
-        self.cols = None # read all columns
-    def __getitem__(self, index):
-        data = self.hdf5
-        data['X_jets'] = np.float32(data['X_jets'][0])
-        data['y'] = np.float32(data['y'])
-        data['m0'] = np.float32(data['m0'])
-        data['pt'] = np.float32(data['pt'])
-        # Preprocessing
-        data['X_jets'][data['X_jets'] < 1.e-3] = 0. # Zero-Suppresion
-        data['X_jets'] = 25.*data['X_jets'][-1,...] # For HCAL: to match pixel intensity distn of other layers
-        data['X_jets'] = data['X_jets']/100. # To standardize
-        return dict(data)
-    def __len__(self):
-        return self.hdf5.shape[1]
-'''
+datafile = 'IMG/test_BoostedJets.hdf5'
 
 def hdf5Dataset(filename, start, end):
     x = HDF5Matrix(filename, 'X_jets', start=start, end=end)[0]
-    x = x[x < 1e-3] = 0. # Zero-Suppresion
-    x = 25.*x[-1,...] # For HCAL: to match pixel intensity distn of other layers
+    x[x < 1.e-3] = 0. # Zero-Suppresion
+    x[-1,...] = 25.*x[-1,...] # For HCAL: to match pixel intensity distn of other layers
     x = x/100. # To standardize
     y = HDF5Matrix(filename, 'y', start=start, end=end)
     return x, y
@@ -72,9 +49,9 @@ class NBatchLogger(keras.callbacks.Callback):
 
 # Defining a callback to create calculate the AUC score of the validation set after each epoch. If that epoch gave the best AUC, the model and metrics will be saved to hdf5 files
 class SaveEpoch(keras.callbacks.Callback):
-    self.auc_best = 0.5
-    def __init__(self, test_data, _expt_name):
-        self.test_data = test_data
+    auc_best = 0.5
+    def __init__(self, _test_data, _expt_name):
+        self.test_data = _test_data
         self.folder = _expt_name
 
     def on_epoch_end(self, epoch, logs={}):
@@ -98,10 +75,8 @@ class SaveEpoch(keras.callbacks.Callback):
             h.close()
 
 # TODO change the decay and decays variables to read the boosted jet files
-decay = 'QCDToGGQQ_IMGjet_RH1all'
-decays = glob.glob('IMG/%s_jet0_run?_n*.train.snappy.parquet'%decay)
-print(">> Input files:",decays)
-#assert len(decays) == 3, "len(decays) = %d"%(len(decays))
+decay = 'BoostedJets'
+print(">> Input file:",datafile)
 expt_name = '%s_%s'%(decay, expt_name)
 for d in ['MODELS', 'METRICS']:
     if not os.path.isdir('%s/%s'%(d, expt_name)):
@@ -109,12 +84,13 @@ for d in ['MODELS', 'METRICS']:
 # TODO
 # Make it so the pt and m0 variables are not passed as an input to the NN, but still make it so I have access to those variables when saving network metrics
 
-train_sz = 700000
-valid_sz = 50000
-test_sz = 50000
+# Test input file is size 32000
+train_sz = 20000
+valid_sz = 5600
+test_sz = 5600
 
 train_x, train_y = hdf5Dataset(datafile, 0, train_sz)
-val_x, val_y = hdf5Dataset(datafile, trin_sz, train_sz+valid_sz)
+val_x, val_y = hdf5Dataset(datafile, train_sz, train_sz+valid_sz)
 
 #TODO make sure I am properly running overgpu
 #possible method 1, tf backend
@@ -122,12 +98,13 @@ from keras.backend.tensorflow_backend import set_session
 config = tf.ConfigProto()
 set_session(tf.Session(config=config))
 #possible method 2, theano backend
-import theano
-theano.config.device='gpu'
-theano.config.floatX='float32'
+#import theano
+#theano.config.device='gpu'
+#theano.config.floatX='float32'
 
 import keras_resnet_single as networks
-resnet = networks.ResNet(3, resblocks, [16, 32])
+#resnet = networks.ResNet(3, resblocks, [16, 32])
+resnet = keras.Model(inputs=keras.layers.Input(shape=(125,125,3)), outputs=networks.ResNet(3, resblocks, [16,32]))
 if args.load_epoch != 0:
     model_name = glob.glob('MODELS/%s/model_epoch%d_auc*.hdf5'%(expt_name, args.load_epoch))[0]
     assert model_name != ''
@@ -144,7 +121,7 @@ batch_logger = NBatchLogger(display=print_step)
 csv_logger = keras.callbacks.CSVLogger('%s.log'%(expt_name), separator=',', append=False)
 callbacks_list=[checkpoint, batch_logger, csv_logger]
 
-history = resnet.Fit(x=train_x, y=train_y, epochs=epochs, verbose=1, callbacks=callbacks_list, validation_data=(val_x, val_y), shuffle=True, initial_epoch = args.load_epoch)
+history = resnet.Fit(x=train_x, y=train_y, batch_size=32, epochs=epochs, verbose=1, callbacks=callbacks_list, validation_data=(val_x, val_y), shuffle=True, initial_epoch = args.load_epoch)
 
 print('Network has finished training')
 
