@@ -62,6 +62,7 @@ class ResNet(object):
         x = layers.MaxPooling2D()(x)
         x = layers.Flatten()(x)
         predictions = layers.Dense(1)(x)
+        predictions = layers.Activation('sigmoid')(predictions)
 
         model = keras.Model(inputs=input, outputs=predictions)
         return model
