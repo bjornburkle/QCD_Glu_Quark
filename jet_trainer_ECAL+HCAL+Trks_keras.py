@@ -24,11 +24,14 @@ epochs = args.epochs
 #os.environ["CUDA_VISIBLE_DEVICES"]=str(args.cuda)
 
 #expt_name = 'ResNet_blocks%d_RH1o100_ECAL+HCAL+Trk_lr%s_gamma0.5every10ep_epochs%d'%(resblocks, str(lr_init), epochs)
-expt_name = 'keras_small_test'
+expt_name = 'keras_test'
 
 #datafile = 'IMG/test_BoostedJets.hdf5'
-datafile = 'root://cmsxrootd.fnal.gov//store/user/bburkle/E2E/BoostedJets_AllJets.hdf5'
+#datafile = 'root://cmsxrootd.fnal.gov//store/user/bburkle/E2E/BoostedJets_AllJets.hdf5'
 #datafile = '/eos/uscms/store/user/bburkle/E2E/BoostedJets_AllJets.hdf5'
+datafile = '/uscms/home/bburkle/nobackup/working_area/ml_code/QCD_Glu_Quark/data/BoostedJets_AllJets_Compressed_file-1.hdf5'
+#data_dir = '/eos/uscms/store/user/bburkle/E2E'
+#datafile = glob.glob('%s/*.hdf5'%data_dir)
 
 def hdf5Dataset(filename, start, end):
     x = HDF5Matrix(filename, 'X_jets', start=start, end=end)
@@ -60,8 +63,8 @@ def train_set(filename, start, end):
 class DataGenerator(keras.utils.Sequence):
     def __init__(self, filename, batch_size=32, data_split=100, start=0, end=32*100, shuffle=True):
         self.hf = h5py.File(filename, 'r')
-        self.x_jets = self.hf['X_jets'][start:end]
-        self.y = self.hf['y'][start:end]
+        self.x_jets = np.float32(self.hf['X_jets'][start:end])
+        self.y = np.float32(self.hf['y'][start:end])
         #self.total_len = len(self.hf['y'])
         self.total_len = end - start
         self.start = start
@@ -170,69 +173,63 @@ def LR_Decay(epoch):
     lr = lr_init * math.pow(drop, math.floor((epoch+1)/epochs_drop))
     return lr
 
-# TODO change the decay and decays variables to read the boosted jet files
-decay = 'BoostedJets'
-print(">> Input file:",datafile)
-expt_name = '%s_%s'%(decay, expt_name)
-for d in ['MODELS', 'METRICS']:
-    if not os.path.isdir('%s/%s'%(d, expt_name)):
-        os.makedirs('%s/%s'%(d, expt_name))
-# TODO
-# Make it so the pt and m0 variables are not passed as an input to the NN, but still make it so I have access to those variables when saving network metrics
-
 # Test input file is size 32000
 #train_sz = 10400*2
-train_sz = 700000
+#train_sz = 704000
+train_sz = 320000
 valid_sz = 48000
 test_sz = 48000
 
-#train_x, train_y = hdf5Dataset(datafile, 0, train_sz)
-train_x, train_y = train_set(datafile, 0, train_sz)
-val_data = val_set(datafile, start=train_sz, end=train_sz+valid_sz)
-#training_generator = DataGenerator(datafile, batch_size=32, data_split=100, start=0, end=train_sz).generate()
-#validation_generator = DataGenerator(datafile, batch_size=32, data_split=10, start=train_sz, end=train_sz+valid_sz).generate()
-#val_x, val_y = hdf5Dataset(datafile, train_sz, train_sz+valid_sz)
 
-#TODO make sure I am properly running overgpu
-#possible method 1, tf backend
-from keras.backend.tensorflow_backend import set_session
-config = tf.ConfigProto()
-config.gpu_options.per_process_gpu_memory_fraction = 0.2
-set_session(tf.Session(config=config))
-#possible method 2, theano backend
-#import theano
-#theano.config.device='gpu'
-#theano.config.floatX='float32'
+if __name__ == '__main__':
+    decay = 'BoostedJets'
+    print(">> Input file:",datafile)
+    expt_name = '%s_%s'%(decay, expt_name)
+    for d in ['MODELS', 'METRICS']:
+        if not os.path.isdir('%s/%s'%(d, expt_name)):
+            os.makedirs('%s/%s'%(d, expt_name))
 
-import keras_resnet_single as networks
-#print('Training set size is:', train_x.shape[0])
-#print('Image size is:', train_x.shape[1:])
-resnet = networks.ResNet.build(3, resblocks, [16,32], (125,125,3))
-if args.load_epoch != 0:
-    model_name = glob.glob('MODELS/%s/model_epoch%d_auc*.hdf5'%(expt_name, args.load_epoch))[0]
-    assert model_name != ''
-    print('Loading weights from file:', model_name)
-    #resnet = keras.models.load_model(model_name)
-    resnet = keras.models.load_weights(model_name)
-opt = keras.optimizers.Adam(lr=lr_init, epsilon=1.e-8) # changed eps to match pytorch value
-resnet.compile(loss='binary_crossentropy', optimizer=opt, metrics=['accuracy'])
-resnet.summary()
+    #train_x, train_y = hdf5Dataset(datafile, 0, train_sz)
+    train_x, train_y = train_set(datafile, 0, train_sz)
+    val_data = val_set(datafile, start=train_sz, end=train_sz+valid_sz)
+    #training_generator = DataGenerator(datafile, batch_size=32, data_split=train_sz/32/10, start=0, end=train_sz).generate()
+    #validation_generator = DataGenerator(datafile, batch_size=32, data_split=10, start=train_sz, end=train_sz+valid_sz).generate()
+    #val_x, val_y = hdf5Dataset(datafile, train_sz, train_sz+valid_sz)
 
-# Model Callbacks
-print_step = 1000
-#checkpoint = SaveEpoch((val_x, val_y), expt_name)
-checkpoint = SaveEpoch(val_data, expt_name)
-batch_logger = NBatchLogger(display=print_step)
-csv_logger = keras.callbacks.CSVLogger('%s.log'%(expt_name), separator=',', append=False)
-lr_scheduler = keras.callbacks.LearningRateScheduler(LR_Decay)
-#callbacks_list=[checkpoint, batch_logger, csv_logger, lr_scheduler]
-callbacks_list=[checkpoint, csv_logger, lr_scheduler]
-#callbacks_list=[checkpoint, csv_logger]
+    from keras.backend.tensorflow_backend import set_session
+    config = tf.ConfigProto()
+    config.gpu_options.per_process_gpu_memory_fraction = 0.3
+    set_session(tf.Session(config=config))
 
-#history = resnet.fit_generator(training_generator, steps_per_epoch=100, epochs=epochs, verbose=1, callbacks=callbacks_list, workers=10, initial_epoch=args.load_epoch, shuffle=False)
-#history = resnet.fit_generator(training_generator, steps_per_epoch=train_sz/32, epochs=epochs, verbose=1, validation_data=validation_generator, validation_steps=10, callbacks=callbacks_list, workers=10, initial_epoch=args.load_epoch, shuffle=False)
-history = resnet.fit(x=train_x, y=train_y, batch_size=32, epochs=epochs, verbose=1, callbacks=callbacks_list, validation_data=(val_data[0], val_data[1]), shuffle='batch', initial_epoch = args.load_epoch)
+    import keras_resnet_single as networks
+    #print('Training set size is:', train_x.shape[0])
+    #print('Image size is:', train_x.shape[1:])
+    resnet = networks.ResNet.build(3, resblocks, [16,32], (125,125,3))
+    if args.load_epoch != 0:
+        model_name = glob.glob('MODELS/%s/model_epoch%d_auc*.hdf5'%(expt_name, args.load_epoch))[0]
+        assert model_name != ''
+        print('Loading weights from file:', model_name)
+        #resnet = keras.models.load_model(model_name)
+        resnet = keras.models.load_weights(model_name)
+    opt = keras.optimizers.Adam(lr=lr_init, epsilon=1.e-8) # changed eps to match pytorch value
+    resnet.compile(loss='binary_crossentropy', optimizer=opt, metrics=['accuracy'])
+    resnet.summary()
 
-print('Network has finished training')
+    # Model Callbacks
+    print_step = 1000
+    #checkpoint = SaveEpoch((val_x, val_y), expt_name)
+    checkpoint = SaveEpoch(val_data, expt_name)
+    batch_logger = NBatchLogger(display=print_step)
+    csv_logger = keras.callbacks.CSVLogger('%s.log'%(expt_name), separator=',', append=False)
+    lr_scheduler = keras.callbacks.LearningRateScheduler(LR_Decay)
+    #callbacks_list=[checkpoint, batch_logger, csv_logger, lr_scheduler]
+    callbacks_list=[checkpoint, csv_logger, lr_scheduler]
+    #callbacks_list=[checkpoint, csv_logger]
+
+    #history = resnet.fit_generator(training_generator, steps_per_epoch=train_sz/32, epochs=epochs, verbose=1, callbacks=callbacks_list, workers=10, initial_epoch=args.load_epoch, shuffle=False)
+    #history = resnet.fit_generator(training_generator, steps_per_epoch=train_sz/32, epochs=epochs, verbose=1, validation_data=validation_generator, validation_steps=10, callbacks=callbacks_list, workers=10, initial_epoch=args.load_epoch, shuffle=False)
+    history = resnet.fit(x=train_x, y=train_y, batch_size=32, epochs=epochs, verbose=1, callbacks=callbacks_list, validation_data=(val_data[0], val_data[1]), shuffle='batch', initial_epoch = args.load_epoch)
+
+    print('Network has finished training')
 
 # TODO Make sure I also save the weights and everything for the final epoch, even if it isn't the best one
