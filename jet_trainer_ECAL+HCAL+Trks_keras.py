@@ -10,21 +10,21 @@ import tensorflow as tf
 from sklearn.metrics import roc_curve, auc
 
 import argparse
-parser = argparse.ArgumentParser(description='Training parameters.')
-parser.add_argument('-e', '--epochs', default=30, type=int, help='Number of training epochs.')
-parser.add_argument('-l', '--lr_init', default=5.e-4, type=float, help='Initial learning rate.')
-parser.add_argument('-b', '--resblocks', default=3, type=int, help='Number of residual blocks.')
-parser.add_argument('-c', '--cuda', default=0, type=int, help='Which gpuid to use.')
-parser.add_argument('-a', '--load_epoch', default=0, type=int, help='Which epoch to start training from')
-args = parser.parse_args()
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='Training parameters.')
+    parser.add_argument('-e', '--epochs', default=30, type=int, help='Number of training epochs.')
+    parser.add_argument('-l', '--lr_init', default=5.e-4, type=float, help='Initial learning rate.')
+    parser.add_argument('-b', '--resblocks', default=3, type=int, help='Number of residual blocks.')
+    parser.add_argument('-c', '--cuda', default=0, type=int, help='Which gpuid to use.')
+    parser.add_argument('-a', '--load_epoch', default=0, type=int, help='Which epoch to start training from')
+    args = parser.parse_args()
+    
+    lr_init = args.lr_init
+    resblocks = args.resblocks
+    epochs = args.epochs
 
-lr_init = args.lr_init
-resblocks = args.resblocks
-epochs = args.epochs
-#os.environ["CUDA_VISIBLE_DEVICES"]=str(args.cuda)
-
-#expt_name = 'ResNet_blocks%d_RH1o100_ECAL+HCAL+Trk_lr%s_gamma0.5every10ep_epochs%d'%(resblocks, str(lr_init), epochs)
 expt_name = 'keras_test'
+#expt_name = 'ResNet_blocks%d_RH1o100_ECAL+HCAL+Trk_lr%s_gamma0.5every10ep_epochs%d'%(resblocks, str(lr_init), epochs)
 
 #datafile = 'IMG/test_BoostedJets.hdf5'
 #datafile = 'root://cmsxrootd.fnal.gov//store/user/bburkle/E2E/BoostedJets_AllJets.hdf5'
@@ -206,11 +206,11 @@ if __name__ == '__main__':
     #print('Image size is:', train_x.shape[1:])
     resnet = networks.ResNet.build(3, resblocks, [16,32], (125,125,3))
     if args.load_epoch != 0:
-        model_name = glob.glob('MODELS/%s/model_epoch%d_auc*.hdf5'%(expt_name, args.load_epoch))[0]
+        model_name = glob.glob('MODELS/%s/epoch%d_auc*.hdf5'%(expt_name, args.load_epoch))[0]
         assert model_name != ''
         print('Loading weights from file:', model_name)
         #resnet = keras.models.load_model(model_name)
-        resnet = keras.models.load_weights(model_name)
+        resnet.load_weights(model_name)
     opt = keras.optimizers.Adam(lr=lr_init, epsilon=1.e-8) # changed eps to match pytorch value
     resnet.compile(loss='binary_crossentropy', optimizer=opt, metrics=['accuracy'])
     resnet.summary()
@@ -232,4 +232,3 @@ if __name__ == '__main__':
 
     print('Network has finished training')
 
-# TODO Make sure I also save the weights and everything for the final epoch, even if it isn't the best one
