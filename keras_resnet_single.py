@@ -48,7 +48,8 @@ class ResNet(object):
         input = layers.Input(shape=input_shape)
 
         #conv0 - changed padding from 1 to 'SAME'
-        x = layers.Conv2D(fmaps[0], input_shape=input_shape, kernel_size=(7,7), strides=(2,2), padding='SAME')(input)
+        #x = layers.Conv2D(fmaps[0], input_shape=input_shape, kernel_size=(7,7), strides=(2,2), padding='SAME')(input)
+        x = layers.Conv2D(fmaps[0], input_shape=input_shape, kernel_size=(1*7,1*7), strides=(1*2,1*2), padding='SAME')(input)
         x = layers.Activation('relu')(x)
         x = layers.MaxPooling2D(pool_size=2)(x)
 

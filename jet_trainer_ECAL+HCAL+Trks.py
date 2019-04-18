@@ -23,49 +23,76 @@ lr_init = args.lr_init
 resblocks = args.resblocks
 epochs = args.epochs
 os.environ["CUDA_VISIBLE_DEVICES"]=str(args.cuda)
+epoch_start = 6
 
-expt_name = 'ResNet_blocks%d_RH1o100_ECAL+HCAL+Trk_lr%s_gamma0.5every10ep_epochs%d'%(resblocks, str(lr_init), epochs)
+#expt_name = 'ResNet_blocks%d_RH1o100_ECAL+HCAL+Trk_lr%s_gamma0.5every10ep_epochs%d'%(resblocks, str(lr_init), epochs)
+expt_name = 'Boosted-opendata_torch_pt-pix-x3_epochs%d'%epochs
 
 class ParquetDataset(Dataset):
-    def __init__(self, filename):
+    def __init__(self, filename, columns):
         self.parquet = pq.ParquetFile(filename)
         self.cols = None # read all columns
-        #self.cols = ['X_jets.list.item.list.item.list.item','y'] 
+        self.columns = columns
+        #self.cols = ['X_jets.list.item.list.item.list.item','m0','pt','y'] 
+        #print(self.parquet.schema)
+        #quit()
     def __getitem__(self, index):
         data = self.parquet.read_row_group(index, columns=self.cols).to_pydict()
-        data['X_jets'] = np.float32(data['X_jets'][0]) 
+        data['X_jets'] = np.float32(data['X_jets'][0])
         data['y'] = np.float32(data['y'])
         data['m0'] = np.float32(data['m0'])
         data['pt'] = np.float32(data['pt'])
+        data = {
+            'X_jets': data['X_jets'],
+            'y': data['y'],
+            'm0': data['m0'],
+            'pt': data['pt']}
         # Preprocessing
-        data['X_jets'][data['X_jets'] < 1.e-3] = 0. # Zero-Suppression
-        data['X_jets'][-1,...] = 25.*data['X_jets'][-1,...] # For HCAL: to match pixel intensity distn of other layers
-        data['X_jets'] = data['X_jets']/100. # To standardize
+        data['X_jets'] = data['X_jets'][self.columns,...]
+        #data['X_jets'][data['X_jets'] < 1.e-3] = 0. # Zero-Suppression
+        #data['X_jets'][-1,...] = 25.*data['X_jets'][-1,...] # For HCAL: to match pixel intensity distn of other layers
+        #data['X_jets'] = data['X_jets']/100. # To standardize
         return dict(data)
     def __len__(self):
         return self.parquet.num_row_groups
+        #return len(self.data)
 
-decay = 'QCDToGGQQ_IMGjet_RH1all'
-decays = glob.glob('IMG/%s_jet0_run?_n*.train.snappy.parquet'%decay)
+#decay = 'QCDToGGQQ_IMGjet_RH1all'
+decays = glob.glob('IMG/x3_parquet/train/*.parquet')
 print(">> Input files:",decays)
-assert len(decays) == 3, "len(decays) = %d"%(len(decays))
-expt_name = '%s_%s'%(decay, expt_name)
+#assert len(decays) == 3, "len(decays) = %d"%(len(decays))
+#expt_name = '%s_%s'%(decay, expt_name)
 for d in ['MODELS', 'METRICS']:
     if not os.path.isdir('%s/%s'%(d, expt_name)):
         os.makedirs('%s/%s'%(d, expt_name))
 
-train_cut = 2*384*1000 # CMS OpenData study
-dset_train = ConcatDataset([ParquetDataset(d) for d in decays])
+train_cut = 32*10000 # 
+val_cut = 32*3000
+
+columns=[0,3,4,5]
+
+dset_train = ConcatDataset([ParquetDataset(d, columns) for d in decays])
+#dset_train = ConcatDataset([ParquetDataset('/uscms/home/bburkle/nobackup/working_area/ml_code/QCD_Glu_Quark/data/quark-gluon_train-set_n793900.hdf5')])
 idxs = np.random.permutation(len(dset_train))
 train_sampler = sampler.SubsetRandomSampler(idxs[:train_cut])
 train_loader = DataLoader(dataset=dset_train, batch_size=32, num_workers=10, sampler=train_sampler, pin_memory=True)
 
-dset_val = ConcatDataset([ParquetDataset(d) for d in decays])
-val_sampler = sampler.SubsetRandomSampler(idxs[train_cut:])
+dset_val = ConcatDataset([ParquetDataset(d, columns) for d in decays])
+#dset_val = dset_train
+val_sampler = sampler.SubsetRandomSampler(idxs[train_cut:train_cut+val_cut])
 val_loader = DataLoader(dataset=dset_val, batch_size=120, num_workers=10, sampler=val_sampler)
 
 import torch_resnet_single as networks
-resnet = networks.ResNet(3, resblocks, [16, 32])
+resnet = networks.ResNet(4, resblocks, [16, 32], gran=3)
+
+# following 4 lines if starting from an epoch
+model_file=glob.glob('MODELS/%s/model_epoch%d_auc*.pkl'%(expt_name, epoch_start-1))
+assert len(model_file) == 1
+model_file = model_file[0]
+#epoch_start = 5
+print('>> Model file:',model_file)
+resnet.load_state_dict(torch.load('%s'%model_file)['model'])
+
 resnet.cuda()
 optimizer = optim.Adam(resnet.parameters(), lr=lr_init)
 lr_scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=[10,20], gamma=0.5)
@@ -132,7 +159,7 @@ print_step = 1000
 roc_auc_best = 0.5
 print(">> Training <<<<<<<<")
 f = open('%s.log'%(expt_name), 'w')
-for e in range(epochs):
+for e in range(epochs)[epoch_start-1:]:
 
     epoch = e+1
     s = '>> Epoch %d <<<<<<<<'%(epoch)
@@ -153,7 +180,7 @@ for e in range(epochs):
         if i % print_step == 0:
             pred = logits.ge(0.).byte()
             acc = pred.eq(y.byte()).float().mean()
-            s = '%d: Train loss:%f, acc:%f'%(epoch, loss.item(), acc.item())
+            s = '%d: Batch %d Train loss:%f, acc:%f'%(epoch, i, loss.item(), acc.item())
             print(s)
         # For more frequent validation:
         #if epoch > 1 and i % eval_step == 0:

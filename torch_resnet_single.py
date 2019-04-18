@@ -29,12 +29,12 @@ class ResBlock(nn.Module):
     
 class ResNet(nn.Module):
 
-    def __init__(self, in_channels, nblocks, fmaps):
+    def __init__(self, in_channels, nblocks, fmaps, gran=1):
         super(ResNet, self).__init__()
         self.fmaps = fmaps
         self.nblocks = nblocks
         
-        self.conv0 = nn.Conv2d(in_channels, fmaps[0], kernel_size=7, stride=2, padding=1)
+        self.conv0 = nn.Conv2d(in_channels, fmaps[0], kernel_size=7*gran, stride=2*gran, padding=1)
         self.layer1 = self.block_layers(self.nblocks, [fmaps[0],fmaps[0]])
         self.layer2 = self.block_layers(1, [fmaps[0],fmaps[1]])
         self.layer3 = self.block_layers(self.nblocks, [fmaps[1],fmaps[1]])
@@ -53,6 +53,7 @@ class ResNet(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x):
+
         x = self.conv0(x)
         x = F.relu(x)
         x = F.max_pool2d(x, kernel_size=2)
