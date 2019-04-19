@@ -20,10 +20,9 @@ def np2arrowArray(x):
     else:
         return pa.array([x.tolist()])
 
-def convert_to_Parquet(decays, start, stop, chunk_size, expt_name, set_name):
+def convert_to_Parquet(decays, start, stop, chunk_size, expt_name, set_name, jets_per_file):
     
     # Open the input HDF5 file
-    jets_per_file = 46700
     dsets = [h5py.File('%s'%decay, 'r') for decay in decays]
     #keys = ['X_jets', 'jetPt', 'jetM', 'y_jets'] # key names in in put hdf5
     keys = ['X_jets', 'pt', 'm0', 'y'] # desired key names in output parquet
@@ -82,6 +81,9 @@ jetId = 0
 nevts_total = 747200
 evts_per_file = 46700
 sets = range(nevts_total // evts_per_file)
+expt_name = 'BoostedJets_opendata_x3'
+decays = ['BoostedJets_x3_file-1.hdf5']
+
 
 all_files = False
 if args.file == 0:
@@ -100,7 +102,6 @@ for set_name in sets:
         print(' >> Doing runId: %d'%runId)
 
         #decays = glob.glob('QCD_Pt_80_170_%s_IMGjet_n*_label?_jet%d_run%d.hdf5'%(list_idx, jetId, runId))
-        decays = ['BoostedJets_x3_file-1.hdf5']
         print(' >>',decays)
         #assert len(decays) == 2
         #nevts_total = decays[0].split("_")[-4][1:]
@@ -109,10 +110,9 @@ for set_name in sets:
 
         start, stop = 0, nevts_total
 
-        expt_name = 'BoostedJets_opendata_x3'
 
         now = time.time()
-        f = convert_to_Parquet(decays, start, stop, chunk_size, expt_name, set_name)
+        f = convert_to_Parquet(decays, start, stop, chunk_size, expt_name, set_name, evts_per_file)
         print(' >> %s time: %.2f'%(set_name,time.time()-now))
 
         reader = pq.ParquetFile(f)

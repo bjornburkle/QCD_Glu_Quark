@@ -7,8 +7,8 @@ import tensorflow.keras as keras
 from tensorflow.keras.models import Sequential
 from tensorflow.keras import layers
 
-# TODO
-# For kernel size and stride, went from a single value 'n' to a tuple '(n,n)'. Need to make sure that this is the correct way to go from pytorch to keras
+
+
 def ResBlock(in_channels, out_channels):
 
     def f(x):
@@ -16,7 +16,6 @@ def ResBlock(in_channels, out_channels):
 
         downsample = out_channels//in_channels
 
-        #TODO see if I want the batch normalization layers
         conv = layers.Conv2D(out_channels, activation='relu', kernel_size=(3,3), strides=(downsample,downsample), padding='SAME')(x)
         #conv = layers.Conv2D(out_channels, input_shape=keras.backend.shape(x)[1:], activation='relu', kernel_size=(3,3), strides=(downsample,downsample), padding='SAME')(x)
         #conv = layers.BatchNormalization()(conv)
@@ -44,12 +43,12 @@ def block_layers(nblocks, fmaps):
 class ResNet(object):
 
     @staticmethod
-    def build(in_channels, nblocks, fmaps, input_shape=(125,125,3)):
+    def build(in_channels, nblocks, fmaps, input_shape=(125,125,3), gran=1):
         input = layers.Input(shape=input_shape)
 
         #conv0 - changed padding from 1 to 'SAME'
         #x = layers.Conv2D(fmaps[0], input_shape=input_shape, kernel_size=(7,7), strides=(2,2), padding='SAME')(input)
-        x = layers.Conv2D(fmaps[0], input_shape=input_shape, kernel_size=(1*7,1*7), strides=(1*2,1*2), padding='SAME')(input)
+        x = layers.Conv2D(fmaps[0], input_shape=input_shape, kernel_size=(gran*7,gran*7), strides=(gran*2,gran*2), padding='SAME')(input)
         x = layers.Activation('relu')(x)
         x = layers.MaxPooling2D(pool_size=2)(x)
 
@@ -57,7 +56,6 @@ class ResNet(object):
         x = block_layers(1, [fmaps[0],fmaps[1]])(x)
         x = block_layers(nblocks, [fmaps[1],fmaps[1]])(x)
 
-        #TODO get pool size
         x = layers.MaxPooling2D()(x)
         x = layers.Flatten()(x)
         predictions = layers.Dense(2)(x)

@@ -22,12 +22,13 @@ epoch = args.epoch
 expt_name = args.expt_name
 #nblocks = int(re.search('blocks([0-9]+?)_', expt_name).group(1))
 nblocks = 3
-channels = [0, 3, 4, 5]
+granularity=1
+channels = [0]
 
 # Uncomment following lines if you dont want to use the vars from the training script
-train_sz = 32*8000
-valid_sz = 32*1500
-test_sz = 32*1500
+#train_sz = 32*8000
+#valid_sz = 32*1500
+#test_sz = 32*1500
 
 #model_file = glob.glob('MODELS/%s/model_epoch%d_auc*.hdf5'%(expt_name, epoch))[0]
 model_file = glob.glob('MODELS/%s/epoch%d_auc*.hdf5*'%(expt_name, epoch))
@@ -47,7 +48,7 @@ config.gpu_options.per_process_gpu_memory_fraction = 0.3
 set_session(tf.Session(config=config))
 
 
-resnet = networks.ResNet.build(3, nblocks, [16,32], (125,125,len(channels)))
+resnet = networks.ResNet.build(len(channels), nblocks, [16,32], (125*granularity,125*granularity,len(channels)), granularity)
 #resnet = keras.models.load_weights(model_name)
 resnet.load_weights(model_file)
 

@@ -183,6 +183,7 @@ test_sz = 32*3000
 # 4 - pix l2
 # 5 - pix l3
 channels = [0]
+granularity=1
 
 if __name__ == '__main__':
     decay = ''
@@ -215,7 +216,7 @@ if __name__ == '__main__':
     import keras_resnet_single as networks
     #print('Training set size is:', train_x.shape[0])
     #print('Image size is:', train_x.shape[1:])
-    resnet = networks.ResNet.build(3, resblocks, [16,32], (125*1,125*1,len(channels)))
+    resnet = networks.ResNet.build(len(channels), resblocks, [16,32], (125*granularity,125*granularity,len(channels)), granularity)
     if args.load_epoch != 0:
         model_name = glob.glob('MODELS/%s/epoch%d_auc*.hdf5*'%(expt_name, args.load_epoch))
         assert len(model_name) == 2

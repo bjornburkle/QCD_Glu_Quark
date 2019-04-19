@@ -9,6 +9,7 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import *
 from sklearn.metrics import roc_curve, auc
+#from pytorch_trainer_imports.py import ParquetDataset, train_cut, val_cut, test_cut
 
 import argparse
 parser = argparse.ArgumentParser(description='Evaluation parameters.')
@@ -19,25 +20,35 @@ args = parser.parse_args()
 
 epoch = args.epoch
 expt_name = args.expt_name
-nblocks = int(re.search('blocks([0-9]+?)_', expt_name).group(1))
+#nblocks = int(re.search('blocks([0-9]+?)_', expt_name).group(1))
+nblocks=3
 os.environ["CUDA_VISIBLE_DEVICES"]=str(args.cuda)
 
 # NOTE: The ParquetDataset class here has to exactly match the one used during training time!!! 
 class ParquetDataset(Dataset):
-    def __init__(self, filename):
+    def __init__(self, filename, columns):
         self.parquet = pq.ParquetFile(filename)
         self.cols = None # read all columns
-        #self.cols = ['X_jets.list.item.list.item.list.item','y']
+        self.columns = columns
+        #self.cols = ['X_jets.list.item.list.item.list.item','m0','pt','y'] 
+        #print(self.parquet.schema)
+        #quit()
     def __getitem__(self, index):
         data = self.parquet.read_row_group(index, columns=self.cols).to_pydict()
         data['X_jets'] = np.float32(data['X_jets'][0])
         data['y'] = np.float32(data['y'])
         data['m0'] = np.float32(data['m0'])
         data['pt'] = np.float32(data['pt'])
+        data = { 
+            'X_jets': data['X_jets'],
+            'y': data['y'],
+            'm0': data['m0'],
+            'pt': data['pt']}
         # Preprocessing
-        data['X_jets'][data['X_jets'] < 1.e-3] = 0. # Zero-Suppression
-        data['X_jets'][-1,...] = 25.*data['X_jets'][-1,...] # For HCAL: to match pixel intensity distn of other layers
-        data['X_jets'] = data['X_jets']/100. # To standardize
+        data['X_jets'] = data['X_jets'][self.columns,...]
+        #data['X_jets'][data['X_jets'] < 1.e-3] = 0. # Zero-Suppression
+        #data['X_jets'][-1,...] = 25.*data['X_jets'][-1,...] # For HCAL: to match pixel   intensity distn of other layers
+        #data['X_jets'] = data['X_jets']/100. # To standardize
         return dict(data)
     def __len__(self):
         return self.parquet.num_row_groups
@@ -45,7 +56,14 @@ class ParquetDataset(Dataset):
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
+### Put your inputs here
 model_file = glob.glob('MODELS/%s/model_epoch%d_auc*.pkl'%(expt_name, epoch))
+decays = glob.glob('IMG/x3_parquet/test/*.parquet')
+granularity = 3
+columns = [0, 3, 4, 5]
+
+test_cut = 24000
+
 assert len(model_file) == 1
 model_file = model_file[0]
 print(">> Model file:", model_file)
@@ -54,16 +72,15 @@ for d in ['METRICS_TEST']:
     if not os.path.isdir('%s/%s'%(d, expt_name)):
         os.makedirs('%s/%s'%(d, expt_name))
 
-decay = 'QCDToGGQQ_IMGjet_RH1all'
-decays = glob.glob('IMG/%s_jet0_run?_n*.test.snappy.parquet'%(decay))
 print(">> Input files:",decays)
-assert len(decays) == 3, "len(decays) = %d"%(len(decays))
 
-dset_test = ConcatDataset([ParquetDataset(d) for d in decays])
+dset_test = ParquetDataset(decays[0], columns)
+#dset_test = ConcatDataset([ParquetDataset(d, columns) for d in decays])
+idxs = np.random.permutation(len(dset_test))
 test_loader = DataLoader(dataset=dset_test, batch_size=120, num_workers=10)
 
 import torch_resnet_single as networks
-resnet = networks.ResNet(3, nblocks, [16, 32])
+resnet = networks.ResNet(len(columns), nblocks, [16, 32], gran=granularity)
 resnet.cuda()
 resnet.load_state_dict(torch.load('%s'%model_file)['model'])
 print('>> N model params (trainable):', count_parameters(resnet))

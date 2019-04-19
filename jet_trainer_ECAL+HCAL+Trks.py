@@ -11,21 +11,28 @@ import torch.optim as optim
 from torch.utils.data import *
 from sklearn.metrics import roc_curve, auc
 
+lr_init = 0.
+epochs = 0
+resblocks = 0
+
 import argparse
-parser = argparse.ArgumentParser(description='Training parameters.')
-parser.add_argument('-e', '--epochs', default=30, type=int, help='Number of training epochs.')
-parser.add_argument('-l', '--lr_init', default=5.e-4, type=float, help='Initial learning rate.')
-parser.add_argument('-b', '--resblocks', default=3, type=int, help='Number of residual blocks.')
-parser.add_argument('-c', '--cuda', default=0, type=int, help='Which gpuid to use.')
-args = parser.parse_args()
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='Training parameters.')
+    parser.add_argument('-e', '--epochs', default=30, type=int, help='Number of training epochs.')
+    parser.add_argument('-l', '--lr_init', default=5.e-4, type=float, help='Initial learning rate.')
+    parser.add_argument('-b', '--resblocks', default=3, type=int, help='Number of residual blocks.')
+    parser.add_argument('-c', '--cuda', default=0, type=int, help='Which gpuid to use.')
+    args = parser.parse_args()
 
-lr_init = args.lr_init
-resblocks = args.resblocks
-epochs = args.epochs
-os.environ["CUDA_VISIBLE_DEVICES"]=str(args.cuda)
-epoch_start = 6
+    lr_init = args.lr_init
+    resblocks = args.resblocks
+    epochs = args.epochs
+    os.environ["CUDA_VISIBLE_DEVICES"]=str(args.cuda)
+    # Epoch you wish to start on, make sure this is 1 if you are not loading an epoch
+    epoch_start = 1
 
-#expt_name = 'ResNet_blocks%d_RH1o100_ECAL+HCAL+Trk_lr%s_gamma0.5every10ep_epochs%d'%(resblocks, str(lr_init), epochs)
+
+    #expt_name = 'ResNet_blocks%d_RH1o100_ECAL+HCAL+Trk_lr%s_gamma0.5every10ep_epochs%d'%(resblocks, str(lr_init), epochs)
 expt_name = 'Boosted-opendata_torch_pt-pix-x3_epochs%d'%epochs
 
 class ParquetDataset(Dataset):
@@ -68,6 +75,8 @@ for d in ['MODELS', 'METRICS']:
 
 train_cut = 32*10000 # 
 val_cut = 32*3000
+test_cut = 32*3000
+granularity = 3
 
 columns=[0,3,4,5]
 
@@ -83,15 +92,16 @@ val_sampler = sampler.SubsetRandomSampler(idxs[train_cut:train_cut+val_cut])
 val_loader = DataLoader(dataset=dset_val, batch_size=120, num_workers=10, sampler=val_sampler)
 
 import torch_resnet_single as networks
-resnet = networks.ResNet(4, resblocks, [16, 32], gran=3)
+resnet = networks.ResNet(len(columns), resblocks, [16, 32], gran=granularity)
 
-# following 4 lines if starting from an epoch
+# NOTE uncomment following 5 lines if starting from an epoch
+'''
 model_file=glob.glob('MODELS/%s/model_epoch%d_auc*.pkl'%(expt_name, epoch_start-1))
 assert len(model_file) == 1
 model_file = model_file[0]
-#epoch_start = 5
 print('>> Model file:',model_file)
 resnet.load_state_dict(torch.load('%s'%model_file)['model'])
+'''
 
 resnet.cuda()
 optimizer = optim.Adam(resnet.parameters(), lr=lr_init)
@@ -136,66 +146,67 @@ def do_eval(resnet, val_loader, f, roc_auc_best, epoch):
     if roc_auc > roc_auc_best:
         roc_auc_best = roc_auc
         f.write('Best ROC AUC:%.4f\n'%roc_auc_best)
-        score_str = 'epoch%d_auc%.4f'%(epoch, roc_auc_best)
+    score_str = 'epoch%d_auc%.4f'%(epoch, roc_auc)
 
-        filename = 'MODELS/%s/model_%s.pkl'%(expt_name, score_str)
-        model_dict = {'model': resnet.state_dict(), 'optim': optimizer.state_dict()}
-        torch.save(model_dict, filename)
+    filename = 'MODELS/%s/model_%s.pkl'%(expt_name, score_str)
+    model_dict = {'model': resnet.state_dict(), 'optim': optimizer.state_dict()}
+    torch.save(model_dict, filename)
 
-        h = h5py.File('METRICS/%s/metrics_%s.hdf5'%(expt_name, score_str), 'w')
-        h.create_dataset('fpr', data=fpr)
-        h.create_dataset('tpr', data=tpr)
-        h.create_dataset('y_truth', data=y_truth_)
-        h.create_dataset('y_pred', data=y_pred_)
-        h.create_dataset('m0', data=m0_)
-        h.create_dataset('pt', data=pt_)
-        h.close()
+    h = h5py.File('METRICS/%s/metrics_%s.hdf5'%(expt_name, score_str), 'w')
+    h.create_dataset('fpr', data=fpr)
+    h.create_dataset('tpr', data=tpr)
+    h.create_dataset('y_truth', data=y_truth_)
+    h.create_dataset('y_pred', data=y_pred_)
+    h.create_dataset('m0', data=m0_)
+    h.create_dataset('pt', data=pt_)
+    h.close()
 
     return roc_auc_best
 
 # MAIN #
-#eval_step = 1000
-print_step = 1000
-roc_auc_best = 0.5
-print(">> Training <<<<<<<<")
-f = open('%s.log'%(expt_name), 'w')
-for e in range(epochs)[epoch_start-1:]:
+if __name__ == '__main__':
+    #eval_step = 1000
+    print_step = 1000
+    roc_auc_best = 0.5
+    print(">> Training <<<<<<<<")
+    f = open('%s.log'%(expt_name), 'w')
+    for e in range(epochs)[epoch_start-1:]:
 
-    epoch = e+1
-    s = '>> Epoch %d <<<<<<<<'%(epoch)
-    print(s)
-    f.write('%s\n'%(s))
+        epoch = e+1
+        s = '>> Epoch %d <<<<<<<<'%(epoch)
+        print(s)
+        f.write('%s\n'%(s))
 
-    # Run training
-    lr_scheduler.step()
-    resnet.train()
-    now = time.time()
-    for i, data in enumerate(train_loader):
-        X, y = data['X_jets'].cuda(), data['y'].cuda()
-        optimizer.zero_grad()
-        logits = resnet(X)
-        loss = F.binary_cross_entropy_with_logits(logits, y).cuda()
-        loss.backward()
-        optimizer.step()
-        if i % print_step == 0:
-            pred = logits.ge(0.).byte()
-            acc = pred.eq(y.byte()).float().mean()
-            s = '%d: Batch %d Train loss:%f, acc:%f'%(epoch, i, loss.item(), acc.item())
-            print(s)
-        # For more frequent validation:
-        #if epoch > 1 and i % eval_step == 0:
-        #    resnet.eval()
-        #    roc_auc_best = do_eval(resnet, val_loader, f, roc_auc_best, epoch)
-        #    resnet.train()
+        # Run training
+        lr_scheduler.step()
+        resnet.train()
+        now = time.time()
+        for i, data in enumerate(train_loader):
+            X, y = data['X_jets'].cuda(), data['y'].cuda()
+            optimizer.zero_grad()
+            logits = resnet(X)
+            loss = F.binary_cross_entropy_with_logits(logits, y).cuda()
+            loss.backward()
+            optimizer.step()
+            if i % print_step == 0:
+                pred = logits.ge(0.).byte()
+                acc = pred.eq(y.byte()).float().mean()
+                s = '%d: Batch %d Train loss:%f, acc:%f'%(epoch, i, loss.item(), acc.item())
+                print(s)
+            # For more frequent validation:
+            #if epoch > 1 and i % eval_step == 0:
+            #    resnet.eval()
+            #    roc_auc_best = do_eval(resnet, val_loader, f, roc_auc_best, epoch)
+            #    resnet.train()
 
-    f.write('%s\n'%(s))
-    now = time.time() - now
-    s = '%d: Train time:%.2fs in %d steps'%(epoch, now, len(train_loader))
-    print(s)
-    f.write('%s\n'%(s))
+        f.write('%s\n'%(s))
+        now = time.time() - now
+        s = '%d: Train time:%.2fs in %d steps'%(epoch, now, len(train_loader))
+        print(s)
+        f.write('%s\n'%(s))
 
-    # Run Validation
-    resnet.eval()
-    roc_auc_best = do_eval(resnet, val_loader, f, roc_auc_best, epoch)
+        # Run Validation
+        resnet.eval()
+        roc_auc_best = do_eval(resnet, val_loader, f, roc_auc_best, epoch)
 
-f.close()
+    f.close()
